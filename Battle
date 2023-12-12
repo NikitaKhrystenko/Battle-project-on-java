@@ -1,0 +1,444 @@
+public abstract class AbstractWarrior implements Warrior {
+    private static int idCounter = 0;
+    private int health;
+    private int initialHealth;
+    private int id = ++idCounter;
+
+    public AbstractWarrior(int health) {
+        this.health = health;
+        this.initialHealth = health;
+    }
+
+    public void acceptDamage(int damage) {
+        if (!(damage < 0)) {
+            setHealth(Math.max(getHealth() - damage, 0));
+        }
+    }
+
+    public abstract int getAttack();
+
+    protected void setHealth(int health) {
+        this.health = Math.min(initialHealth, health);
+    }
+
+    public int getHealth() {
+        return health;
+    }
+
+    @Override
+    public String toString() {
+        String name = getClass().getSimpleName();
+        name = name.replaceAll("Impl", "");
+        name = name.toUpperCase();
+        return name + "#" + id + "{h=" + health + ", a=" + getAttack() + "}";
+    }
+}
+
+
+import java.util.*;
+import java.util.function.Supplier;
+
+public class Army implements Iterable<Warrior>{
+    private static int idCounter  = 0;
+    private int id = ++idCounter;
+
+    private Deque<WarriorInArmyImpl> troops = new ArrayDeque<>();
+
+    public Army addUnits (WarriorClasses warriorClasses, int quantity){
+        return addUnits(warriorClasses::make, quantity);
+    }
+
+    public Army addUnits(Supplier<Warrior> warriorFactoy, int quantity){
+        for (int i = 0; i < quantity; i++){
+            Warrior novice = warriorFactoy.get();
+            var noviceInArmy = new WarriorInArmyImpl(novice);
+            Optional.ofNullable(troops.peekLast())
+                    .ifPresent(w -> noviceInArmy.setWarriorBehind(noviceInArmy));
+            troops.add(noviceInArmy);
+        }
+        return this;
+    }
+
+    public boolean isEmpty() {
+        return new FirstAliveIterator().hasNext();
+    }
+
+    @Override
+    public Iterator<Warrior> iterator() {
+        return new AllAliveIterator();
+    }
+
+    public Iterator<Warrior> firstAliveIterator() {
+        return new FirstAliveIterator();
+    }
+
+    @Override
+    public String toString() {
+        return "Army#" + id +
+                "{" + troops +
+                "}";
+    }
+
+    public interface Command {
+    }
+
+    enum ChampionDealsHit implements Command {
+       INSTANCE;
+    }
+
+    private static class WarriorInArmyImpl implements WarriorInArmy{
+        private final Warrior warrior;
+        private WarriorInArmy warriorBehind;
+
+        public WarriorInArmyImpl(Warrior warrior){
+            this.warrior = Objects.requireNonNull(warrior);
+        }
+
+        private void setWarriorBehind(WarriorInArmy warriorBehind) {
+            this.warriorBehind = Objects.requireNonNull(warriorBehind);
+        }
+
+        @Override
+        public Optional<WarriorInArmy> getWarriorBehind() {
+            return Optional.ofNullable(warriorBehind);
+        }
+
+        @Override
+        public void acceptDamage(int damage) {
+            warrior.acceptDamage(damage);
+        }
+
+        Warrior unwrap(){
+            return warrior;
+        }
+
+        void passCommand(Command command, WarriorInArmy passer) {
+            if (passer != this){
+                if (command instanceof ChampionDealsHit &&
+                        warrior instanceof CanHeal healer){
+                    healer.heal(passer);
+                }
+            }
+            getWarriorBehind().ifPresent(w -> ((WarriorInArmyImpl) w)
+                    .passCommand(command, this));
+        }
+
+        @Override
+        public void hit(CanAcceptDamage opponent) {
+            warrior.hit(opponent);
+            passCommand(ChampionDealsHit.INSTANCE, this);
+        }
+
+        @Override
+        public int getAttack() {
+            return warrior.getAttack();
+        }
+
+        @Override
+        public int getHealth() {
+            return warrior.getHealth();
+        }
+
+        @Override
+        public boolean isAlive() {
+            return warrior.isAlive();
+        }
+
+        @Override
+        public String toString() {
+            return warrior.toString();
+        }
+    }
+
+    private class FirstAliveIterator implements Iterator<Warrior>{
+        @Override
+        public boolean hasNext() {
+            while (!troops.isEmpty() && !troops.peek().isAlive()){
+                troops.poll();
+            }
+            return !troops.isEmpty();
+        }
+
+        @Override
+        public Warrior next() {
+            if (!hasNext()) throw new NoSuchElementException();
+            return troops.peek();
+        }
+    }
+
+    private class AllAliveIterator implements Iterator<Warrior>{
+
+        Iterator<WarriorInArmyImpl> iterator = troops.iterator();
+        WarriorInArmyImpl warrior;
+
+        @Override
+        public boolean hasNext() {
+            while (iterator.hasNext()){
+                warrior = iterator.next();
+                if (warrior.isAlive()) return true;
+            }
+            return false;
+        }
+
+
+        @Override
+        public Warrior next() {
+            if (!hasNext()) throw new NoSuchElementException();
+            return warrior.unwrap();
+        }
+    }
+}
+
+public interface CanAcceptDamage extends HasHealth{
+    void acceptDamage(int damage);
+}
+
+public interface CanHeal {
+    void heal(HasHealth patient);
+}
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public interface CanHit extends HasAttack {
+    Logger log = LoggerFactory.getLogger(CanHit.class);
+    default void hit(CanAcceptDamage opponent){
+        log.info("Warrior {} hits {}", this, opponent);
+        opponent.acceptDamage(getAttack());
+    }
+}
+
+public interface CanHitAndReportMixin extends CanHit{
+    default int hitAndReportDealtDamage (CanAcceptDamage opponent){
+        var healthBefore = opponent.getHealth();
+        CanHit.super.hit(opponent);
+        var healthAfter = opponent.getHealth();
+        var damageDealt = healthBefore - healthAfter;
+        return damageDealt;
+    }
+}
+
+public class DefenderImpl extends AbstractWarrior implements  HasDefence {
+
+    static final int INITIAL_HEALTH = 60;
+    static final int ATTACK = 3;
+    static final int DEFENCE = 2;
+
+    public DefenderImpl(){
+        super(INITIAL_HEALTH);
+    }
+
+    @Override
+    public int getAttack() {
+        return ATTACK;
+    }
+
+    public int getDefence() {
+        return DEFENCE;
+    }
+
+    @Override
+    public void acceptDamage(int damage) {
+        int newDamage = Math.max(0, damage-getDefence());
+        super.acceptDamage(newDamage);
+    }
+}
+
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
+public class Game {
+    public static boolean fight(Warrior first, Warrior second){
+        while(first.isAlive()) {
+            first.hit(second);
+            if (!second.isAlive()) {
+                return true;
+            }
+            second.hit(first);
+        }
+        return false;
+    }
+
+    public static boolean fight(Army first, Army second){
+        log.info("Army {} fights against army {}", first, second);
+        var it1 = first.firstAliveIterator();
+        var it2 = second.firstAliveIterator();
+
+        while(it1.hasNext()&&it2.hasNext()) {
+            fight(it1.next(), it2.next());
+        }
+        return it1.hasNext();
+    }
+
+    public static boolean straightFight(Army first, Army second){
+        log.info("Army {} fights against army {}", first, second);
+
+        while(!first.isEmpty() && !second.isEmpty()) {
+            var it1 = first.iterator();
+            var it2 = second.iterator();
+            while (it1.hasNext() && it2.hasNext()) {
+                fight(it1.next(), it2.next());
+            }
+        }
+        return !first.isEmpty();
+    }
+}
+
+public interface HasAttack {
+    int getAttack();
+}
+
+public interface HasDefence {
+    int getDefence();
+}
+
+public interface HasHealth {
+    int getHealth();
+
+    default boolean isAlive() {
+        return getHealth() > 0;
+    }
+}
+
+public class HealerImpl extends AbstractWarrior implements CanHeal {
+    private static final int HEAL_POWER = 2;
+    private static final int INITIAL_HEALTH = 50;
+
+    public HealerImpl() {
+        super(INITIAL_HEALTH);
+    }
+
+    @Override
+    public int getAttack() {
+        return 0;
+    }
+
+    private int getHealPower() {
+        return HEAL_POWER;
+    }
+
+    @Override
+    public void heal(HasHealth patient) {
+        if (patient instanceof AbstractWarrior abstractWarrior) {
+            abstractWarrior.setHealth(abstractWarrior.getHealth() + getHealPower());
+        }
+    }
+}
+
+public class KnightImpl extends AbstractWarrior {
+    static final int INITIAL_HEALTH = 50;
+
+    static final int ATTACK = 7;
+
+    public KnightImpl() {
+        super(INITIAL_HEALTH);
+    }
+
+    @Override
+    public int getAttack() {
+        return ATTACK;
+    }
+}
+
+public class LancerImpl extends AbstractWarrior implements CanHitAndReportMixin {
+    static final int ATTACK = 6;
+    static final int INITIAL_HEALTH = 50;
+    static final int PENETRATION = 50;
+
+    public LancerImpl() {
+        super(INITIAL_HEALTH);
+    }
+
+    @Override
+    public int getAttack() {
+        return ATTACK;
+    }
+
+    @Override
+    public void hit(CanAcceptDamage opponent) {
+        var damageDealt = hitAndReportDealtDamage(opponent);
+        if (opponent instanceof WarriorInArmy warriorInArmy) {
+            var nextBehind = warriorInArmy.getWarriorBehind();
+            if (nextBehind.isPresent()) {
+                int secondDamage = damageDealt * PENETRATION / 100;
+                nextBehind.get().acceptDamage(secondDamage);
+            }
+        }
+    }
+}
+
+public class VampireImpl extends AbstractWarrior implements CanHitAndReportMixin {
+    static final int ATTACK = 4;
+    static final int INITIAL_HEALTH = 40;
+    static final int VAMPIRISM = 50;
+
+    public VampireImpl() {
+        super(INITIAL_HEALTH);
+    }
+
+    @Override
+    public int getAttack() {
+        return ATTACK;
+    }
+
+    public int getVampirism() {
+        return VAMPIRISM;
+    }
+
+    @Override
+    public void hit(CanAcceptDamage opponent) {
+        var damageDealt = hitAndReportDealtDamage(opponent);
+        var healing = damageDealt * getVampirism() / 100;
+        setHealth(getHealth() + healing);
+    }
+}
+
+public interface Warrior extends
+        CanAcceptDamage,
+        CanHit {
+}
+
+public enum WarriorClasses {
+    WARRIOR, KNIGHT, DEFENDER, VAMPIRE, LANCER, HEALER;
+
+    public static Warrior factory(WarriorClasses wariorClasses) {
+        return switch (wariorClasses) {
+            case KNIGHT -> new KnightImpl();
+            case WARRIOR -> new WarriorImpl();
+            case DEFENDER -> new DefenderImpl();
+            case VAMPIRE -> new VampireImpl();
+            case LANCER -> new LancerImpl();
+            case HEALER -> new HealerImpl();
+        };
+    }
+
+    public Warrior make() {
+        return factory(this);
+    }
+}
+
+public class WarriorImpl extends AbstractWarrior {
+    static final int INITIAL_HEALTH = 50;
+    static final int ATTACK = 5;
+
+    public WarriorImpl() {
+        super(INITIAL_HEALTH);
+    }
+
+    @Override
+    public int getAttack() {
+        return ATTACK;
+    }
+    
+}
+
+import java.util.Optional;
+
+public interface WarriorInArmy extends Warrior {
+    Optional<WarriorInArmy> getWarriorBehind();
+}
+
+public class Main {
+    public static void main(String... args) {
+    }
+}
